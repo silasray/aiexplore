@@ -17,10 +17,6 @@ class Synapse:
     
     def interrogate(self, activation):
         return partial(self.right.interrogate, activation)
-    
-    def reinforce(self, activation, factor):
-        # decrease weight, propagate right
-        pass
 
 
 class Neuron:
@@ -43,10 +39,6 @@ class Neuron:
             self.activations[activation] = activation_value
             return [right.interrogate(activation) for right in self.right_synapses]
         return []
-    
-    def reinforce(self, synapse, activation, factor):
-        # propagate right
-        pass
 
 
 class Input(Neuron):
@@ -78,23 +70,34 @@ class Output(Neuron):
         if activation_value >= 1:
             return self
         return []
-    
-    def reinforce(self, synapse, activation, factor):
-        pass
 
 
 class ReinforceProbe:
 
-    def __init__(self, neuron, activation, parent=None):
+    def __init__(self, neuron, activation, synapse=None, parent=None):
         self.neuron = neuron
+        self.synapse = synapse
         self.activation = activation
         self.parent = parent
         parent_cost = parent.cost if parent else 0
         self.cost = parent_cost + 1 - neuron.activation_value(activation)
+        self.vistation_weight = synapse.weight if synapse is not None else 0
     
     def propegate(self):
         for synapse in self.neuron.left_synapses:
-            yield  ReinforceProbe(synapse.left, self.activation, self)
+            yield  ReinforceProbe(synapse.left, self.activation, synapse, self)
+    
+    def reinforce(self, factor):
+        if factor < 0:
+            weight = self.synapse.weight + factor * self.vistation_weight
+        else:
+            weight = self.synapse.weight + factor * (1 - self.vistation_weight)
+        if weight < .001:
+            self.synapse.weight = .001
+        elif weight > 1:
+            self.synapse.weight = 1
+        else:
+            self.synapse.weight = weight
 
 
 class Activation:
@@ -142,4 +145,12 @@ class Activation:
                 probes.insert(index, new_probe)
             if probe.neuron in paths:
                 paths[probe.neuron].append(probe)
-        for _, input_probes in paths.items():
+        for input_probes in paths.values():
+            total_costs = sum(p.cost for p in input_probes)
+            for input_probe in input_probes:
+                path_factor = factor * (1 - input_probe.cost / total_costs)
+                cursor = input_probe
+                while cursor.parent is not None:
+                    cursor = cursor.parent
+                    cursor.reinforce(path_factor)
+
