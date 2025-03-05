@@ -1,5 +1,6 @@
 from weakref import WeakKeyDictionary
 from functools import partial
+from collections import deque
 
 
 class Synapse:
@@ -17,7 +18,7 @@ class Synapse:
     def interrogate(self, activation):
         return partial(self.right.interrogate, activation)
     
-    def reinforce(self, activation):
+    def reinforce(self, activation, factor):
         # decrease weight, propagate right
         pass
 
@@ -43,7 +44,7 @@ class Neuron:
             return [right.interrogate(activation) for right in self.right_synapses]
         return []
     
-    def reinforce(self, synapse, activation):
+    def reinforce(self, synapse, activation, factor):
         # propagate right
         pass
 
@@ -59,9 +60,6 @@ class Input(Neuron):
     
     def interrogate(self, synapse, activation):
         return [right.interrogate(activation) for right in self.right_synapses]
-    
-    def reinforce(self, synapse, activation):
-        return []
     
 
 class Output(Neuron):
@@ -80,6 +78,23 @@ class Output(Neuron):
         if activation_value >= 1:
             return self
         return []
+    
+    def reinforce(self, synapse, activation, factor):
+        pass
+
+
+class ReinforceProbe:
+
+    def __init__(self, neuron, activation, parent=None):
+        self.neuron = neuron
+        self.activation = activation
+        self.parent = parent
+        parent_cost = parent.cost if parent else 0
+        self.cost = parent_cost + 1 - neuron.activation_value(activation)
+    
+    def propegate(self):
+        for synapse in self.neuron.left_synapses:
+            yield  ReinforceProbe(synapse.left, self.activation, self)
 
 
 class Activation:
@@ -104,6 +119,27 @@ class Activation:
                         break
                 if self.output is not None:
                     break
+                next_iteration = _next_iteration
             else:
                 raise RuntimeError('unresolvable')
         return self.output
+    
+    def reinforce(self, factor, max_steps=10000):
+        if self.output is None:
+            raise RuntimeError('solution has not been resolved')
+        probes = deque()
+        probes.append(ReinforceProbe(self.output, self))
+        paths = {input: [] for input in self.inputs}
+        for _ in range(max_steps):
+            if not probes:
+                break
+            probe = probes.pop()
+            for new_probe in probe.propegate():
+                index = 0
+                for index, existing_probe in enumerate(probes):
+                    if existing_probe.cost > new_probe.cost:
+                        break
+                probes.insert(index, new_probe)
+            if probe.neuron in paths:
+                paths[probe.neuron].append(probe)
+        for _, input_probes in paths.items():
