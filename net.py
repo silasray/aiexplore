@@ -1,6 +1,7 @@
 from weakref import WeakKeyDictionary
 from functools import partial
 from collections import deque
+import random
 
 
 class Synapse:
@@ -154,3 +155,46 @@ class Activation:
                     cursor = cursor.parent
                     cursor.reinforce(path_factor)
 
+
+class Cluster:
+
+    def __init__(self, root):
+        self.root = root
+        self.neurons = [root]
+        self.dangling_neurons = deque(self.neurons)
+    
+    def generate(self, neuron_count, synapse_count, max_dangling_neurons=5):
+        for _ in range(neuron_count):
+            if len(self.dangling_neurons) > max_dangling_neurons:
+                existing_neuron = self.dangling_neurons.pop()
+            else:
+                existing_neuron = random.choice(self.neurons)
+                if existing_neuron in self.dangling_neurons:
+                    self.dangling_neurons.remove(existing_neuron)
+            new_neuron = Neuron()
+            self.dangling_neurons.append(new_neuron)
+            self.neurons.append(new_neuron)
+            self.link(existing_neuron, new_neuron)
+        for _ in range(synapse_count - neuron_count):
+            neuron_1 = random.choice(self.neurons)
+            if neuron_1 in self.dangling_neurons:
+                self.dangling_neurons.remove(neuron_1)
+            neuron_2 = random.choice(self.neurons)
+            if neuron_2 in self.dangling_neurons:
+                self.dangling_neurons.remove(neuron_2)
+            self.link(neuron_1, neuron_2)
+
+    def link(self, neuron_1, neuron_2):
+        raise NotImplemented('can only link within input or output')
+
+
+class InputCluster(Cluster):
+
+    def link(self, neuron_1, neuron_2):
+        Synapse(neuron_1, neuron_2)
+
+
+class OutputCluster(Cluster):
+
+    def link(self, neuron_1, neuron_2):
+        Synapse(neuron_2, neuron_1)
