@@ -2,6 +2,7 @@ from weakref import WeakKeyDictionary
 from functools import partial
 from collections import deque
 import random
+from itertools import chain, permutations, cycle
 
 
 class Synapse:
@@ -17,7 +18,7 @@ class Synapse:
         return self.right.activation_value(activation) * self.weight
     
     def interrogate(self, activation):
-        return partial(self.right.interrogate, activation)
+        return partial(self.right.interrogate, self, activation)
 
 
 class Neuron:
@@ -30,15 +31,15 @@ class Neuron:
     def activation_value(self, activation):
         return self.activations.get(activation, 0)
     
-    def interrogate(self, synapse, activation):
+    def interrogate(self, inbound_synapse, activation):
         activation_value = self.activations.get(activation, 0)
         if  activation_value < 1:
-            link_value = synapse.link_value(activation)
+            link_value = inbound_synapse.link_value(activation)
             activation_value += link_value
             if activation_value > 1:
                 activation_value = 1
             self.activations[activation] = activation_value
-            return [right.interrogate(activation) for right in self.right_synapses]
+            return [outbound_synapse.interrogate(activation) for outbound_synapse in self.right_synapses]
         return []
 
 
@@ -172,8 +173,8 @@ class Cluster:
                 if existing_neuron in self.dangling_neurons:
                     self.dangling_neurons.remove(existing_neuron)
             new_neuron = Neuron()
-            self.dangling_neurons.append(new_neuron)
             self.neurons.append(new_neuron)
+            self.dangling_neurons.append(new_neuron)
             self.link(existing_neuron, new_neuron)
         for _ in range(synapse_count - neuron_count):
             neuron_1 = random.choice(self.neurons)
@@ -185,7 +186,12 @@ class Cluster:
             self.link(neuron_1, neuron_2)
 
     def link(self, neuron_1, neuron_2):
-        raise NotImplemented('can only link within input or output')
+        raise NotImplemented('can only link within input or output cluster')
+    
+    def get_neuron(self):
+        if self.dangling_neurons:
+            return self.dangling_neurons.pop()
+        return random.choice(self.neurons)
 
 
 class InputCluster(Cluster):
@@ -198,3 +204,30 @@ class OutputCluster(Cluster):
 
     def link(self, neuron_1, neuron_2):
         Synapse(neuron_2, neuron_1)
+
+
+class Network:
+
+    def __init__(self, inputs, outputs, neuron_count, synapse_count, interlink_factor=lambda i, o, nc, sc: 2):
+        self.inputs = {value: Input(value) for value in inputs}
+        self.outputs = {value: Output(value) for value in outputs}
+        io_count = len(inputs) + len(outputs)
+        cluster_size = neuron_count // io_count
+        interlink_factor = interlink_factor(inputs, outputs, neuron_count, synapse_count)
+        synapse_share = synapse_count // (io_count + interlink_factor)
+        clusters = []
+        for cluster in chain((InputCluster(i) for i in self.inputs.values()), (OutputCluster(o) for o in self.outputs.values())):
+            clusters.append(cluster)
+            cluster.generate(cluster_size, synapse_share)
+        permutation_iterator = cycle(permutations(clusters, 2))
+        for _ in range(synapse_share * interlink_factor):
+            left, right = next(permutation_iterator)
+            left.link(left.get_neuron(), right.get_neuron())
+    
+    def spawn_activation(self, *input_values):
+        return Activation(*[self.inputs[v] for v in input_values])
+
+
+network = Network(('0', '1', '2', '+'), ('1', '2', '3'), 90, 450)
+activation = network.spawn_activation('0', '1', '+')
+print(activation.resolve().value)
