@@ -15,7 +15,7 @@ class Synapse:
         self.weight = .2
     
     def link_value(self, activation):
-        return self.right.activation_value(activation) * self.weight
+        return self.left.activation_value(activation) * self.weight
     
     def interrogate(self, activation):
         return partial(self.right.interrogate, self, activation)
@@ -109,22 +109,22 @@ class Activation:
         self.output = None
     
     def resolve(self, max_steps=1000):
-        next_iteration = [interrogation for input_ in self.inputs for interrogation in input_.interrogate(None, self)]
+        current_iteration = [interrogation for input_ in self.inputs for interrogation in input_.interrogate(None, self)]
         if self.output is None:
-            _next_iteration = []
             for _ in range(max_steps):
-                for interrogate in next_iteration:
+                next_iteration = []
+                for interrogate in current_iteration:
                     results = interrogate()
-                    for result in results:
-                        if isinstance(result, list):
-                            _next_iteration.extend(result)
-                        else:
-                            self.output = result
-                    if self.output is not None:
+                    if isinstance(results, list):
+                        next_iteration.extend(results)
+                    else:
+                        self.output = results
                         break
+                if not next_iteration and not self.output:
+                    raise RuntimeError('unresolvable')
                 if self.output is not None:
                     break
-                next_iteration = _next_iteration
+                current_iteration = next_iteration
             else:
                 raise RuntimeError('unresolvable')
         return self.output
@@ -228,6 +228,18 @@ class Network:
         return Activation(*[self.inputs[v] for v in input_values])
 
 
-network = Network(('0', '1', '2', '+'), ('1', '2', '3'), 90, 450)
-activation = network.spawn_activation('0', '1', '+')
-print(activation.resolve().value)
+network = Network(('1',), ('1',), 2, 3, lambda *_: 1)
+activation = network.spawn_activation('1')
+for _ in range(1000):
+    try:
+        print(activation.resolve(max_steps=1000).value)
+    except RuntimeError:
+        pass
+    else:
+        break
+print(network.outputs['1'].activation_value(activation))
+
+
+# network = Network(('0', '1', '2', '+'), ('1', '2', '3'), 45, 135)
+# activation = network.spawn_activation('0', '1', '+')
+# print(activation.resolve(max_steps=100).value)
