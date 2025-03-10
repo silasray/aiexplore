@@ -228,18 +228,119 @@ class Network:
         return Activation(*[self.inputs[v] for v in input_values])
 
 
-network = Network(('1',), ('1',), 2, 3, lambda *_: 1)
-activation = network.spawn_activation('1')
-for _ in range(1000):
-    try:
-        print(activation.resolve(max_steps=1000).value)
-    except RuntimeError:
-        pass
-    else:
-        break
-print(network.outputs['1'].activation_value(activation))
+# network = Network(('1',), ('1',), 2, 3, lambda *_: 1)
+# activation = network.spawn_activation('1')
+# for _ in range(1000):
+#     try:
+#         print(activation.resolve(max_steps=1000).value)
+#     except RuntimeError:
+#         pass
+#     else:
+#         break
+# print(network.outputs['1'].activation_value(activation))
 
 
 # network = Network(('0', '1', '2', '+'), ('1', '2', '3'), 45, 135)
 # activation = network.spawn_activation('0', '1', '+')
 # print(activation.resolve(max_steps=100).value)
+
+
+def test_neuron_activation_value_0():
+    neuron = Neuron()
+    activation = Activation()
+    neuron.activations[activation] = 0
+    assert neuron.activation_value(activation) == 0
+
+def test_neuron_activation_value_decimal():
+    neuron = Neuron()
+    activation = Activation()
+    neuron.activations[activation] = .5
+    assert neuron.activation_value(activation) == .5
+
+def test_neuron_activation_value_1():
+    neuron = Neuron()
+    activation = Activation()
+    neuron.activations[activation] = 1
+    assert neuron.activation_value(activation) == 1
+
+def test_neuron_activation_value_unset():
+    neuron = Neuron()
+    activation = Activation()
+    assert neuron.activation_value(activation) == 0
+
+def test_weakref_release_for_activation_value():
+    import gc
+    neuron = Neuron()
+    activation = Activation()
+    neuron.activations[activation] = .5
+    assert neuron.activation_value(activation) == .5
+    del activation
+    gc.collect()
+    assert len(neuron.activations) == 0
+
+def test_synapse_initialization():
+    neuron_1 = Neuron()
+    neuron_2 = Neuron()
+    synapse_1 = Synapse(neuron_1, neuron_2)
+    assert synapse_1.left is neuron_1
+    assert synapse_1.right is neuron_2
+    assert neuron_1.left_synapses == []
+    assert neuron_1.right_synapses == [synapse_1]
+    assert neuron_2.left_synapses == [synapse_1]
+    assert neuron_2.right_synapses == []
+    neuron_3 = Neuron()
+    synapse_2 = Synapse(neuron_1, neuron_3)
+    synapse_3 = Synapse(neuron_3, neuron_2)
+    assert synapse_1.left is neuron_1
+    assert synapse_1.right is neuron_2
+    assert synapse_2.left is neuron_1
+    assert synapse_2.right is neuron_3
+    assert synapse_3.left is neuron_3
+    assert synapse_3.right is neuron_2
+    assert neuron_1.left_synapses == []
+    assert neuron_1.right_synapses == [synapse_1, synapse_2]
+    assert neuron_2.left_synapses == [synapse_1, synapse_3]
+    assert neuron_2.right_synapses == []
+    assert neuron_3.left_synapses == [synapse_2]
+    assert neuron_3.right_synapses == [synapse_3]
+    
+def test_synapse_link_value():
+    neuron_1 = Neuron()
+    neuron_2 = Neuron()
+    synapse = Synapse(neuron_1, neuron_2)
+    synapse.weight = .5
+    activation = Activation()
+    neuron_1.activations[activation] = .5
+    neuron_2.activations[activation] = .2
+    assert synapse.link_value(activation) == .25
+
+def test_neuron_interrogation_not_yet_activated():
+    inbound_neuron = Neuron()
+    neuron = Neuron()
+    outbound_neuron = Neuron()
+    inbound_synapse = Synapse(inbound_neuron, neuron)
+    inbound_synapse.weight = .5
+    outbound_synapse = Synapse(neuron, outbound_neuron)
+    activation = Activation()
+    inbound_neuron.activations[activation] = .5
+    outbound_neuron.activations[activation] = .25
+    return_value = neuron.interrogate(inbound_synapse, activation)
+    assert len(return_value) == 1
+    assert return_value[0].func.__self__ is outbound_neuron
+    assert neuron.activation_value(activation) == .25
+
+def test_neuron_interrogation_already_activated():
+    inbound_neuron = Neuron()
+    neuron = Neuron()
+    outbound_neuron = Neuron()
+    inbound_synapse = Synapse(inbound_neuron, neuron)
+    inbound_synapse.weight = .5
+    outbound_synapse = Synapse(neuron, outbound_neuron)
+    activation = Activation()
+    inbound_neuron.activations[activation] = .5
+    neuron.activations[activation] = .2
+    outbound_neuron.activations[activation] = .25
+    return_value = neuron.interrogate(inbound_synapse, activation)
+    assert len(return_value) == 1
+    assert return_value[0].func.__self__ is outbound_neuron
+    assert neuron.activation_value(activation) == .45
