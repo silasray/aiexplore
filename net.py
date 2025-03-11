@@ -13,9 +13,13 @@ class Synapse:
         left.right_synapses.append(self)
         right.left_synapses.append(self)
         self.weight = .2
+        self.activations = WeakKeyDictionary()
     
-    def link_value(self, activation):
-        return self.left.activation_value(activation) * self.weight
+    def marginal_link_value(self, activation):
+        total_value = self.left.activation_value(activation) * self.weight
+        previous_value = self.activations.get(activation, 0)
+        self.activations[activation] = total_value
+        return total_value - previous_value
     
     def interrogate(self, activation):
         return partial(self.right.interrogate, self, activation)
@@ -34,7 +38,7 @@ class Neuron:
     def interrogate(self, inbound_synapse, activation):
         activation_value = self.activations.get(activation, 0)
         if  activation_value < 1:
-            link_value = inbound_synapse.link_value(activation)
+            link_value = inbound_synapse.marginal_link_value(activation)
             activation_value += link_value
             if activation_value > 1:
                 activation_value = 1
@@ -65,7 +69,7 @@ class Output(Neuron):
     def interrogate(self, synapse, activation):
         activation_value = self.activations.get(activation, 0)
         if  activation_value < 1:
-            link_value = synapse.link_value(activation)
+            link_value = synapse.marginal_link_value(activation)
             activation_value += link_value
             self.activations[activation] = activation_value
         # when an output is fully activated, activation is complete
@@ -312,7 +316,7 @@ def test_synapse_link_value():
     activation = Activation()
     neuron_1.activations[activation] = .5
     neuron_2.activations[activation] = .2
-    assert synapse.link_value(activation) == .25
+    assert synapse.marginal_link_value(activation) == .25
 
 def test_neuron_interrogation_not_yet_activated():
     inbound_neuron = Neuron()
@@ -337,10 +341,11 @@ def test_neuron_interrogation_already_activated():
     inbound_synapse.weight = .5
     outbound_synapse = Synapse(neuron, outbound_neuron)
     activation = Activation()
+    inbound_synapse.activations[activation] = .1
     inbound_neuron.activations[activation] = .5
-    neuron.activations[activation] = .2
-    outbound_neuron.activations[activation] = .25
+    neuron.activations[activation] = .1
+    outbound_neuron.activations[activation] = .35
     return_value = neuron.interrogate(inbound_synapse, activation)
     assert len(return_value) == 1
     assert return_value[0].func.__self__ is outbound_neuron
-    assert neuron.activation_value(activation) == .45
+    assert neuron.activation_value(activation) == .25
