@@ -1,6 +1,6 @@
 from weakref import WeakKeyDictionary
 from functools import partial
-from collections import deque
+from collections import deque, namedtuple
 import random
 from itertools import chain, permutations, cycle
 
@@ -43,8 +43,8 @@ class Neuron:
             if activation_value > 1:
                 activation_value = 1
             self.activations[activation] = activation_value
-            return [outbound_synapse.interrogate(activation) for outbound_synapse in self.right_synapses]
-        return []
+            return ([outbound_synapse.interrogate(activation) for outbound_synapse in self.right_synapses], None)
+        return ([], None)
 
 
 class Input(Neuron):
@@ -56,8 +56,8 @@ class Input(Neuron):
     def activation_value(self, activation):
         return 1
     
-    def interrogate(self, synapse, activation):
-        return [right.interrogate(activation) for right in self.right_synapses]
+    def interrogate(self, inbound_synapse, activation):
+        return ([right.interrogate(activation) for right in self.right_synapses], None)
     
 
 class Output(Neuron):
@@ -66,16 +66,15 @@ class Output(Neuron):
         super().__init__()
         self.value = value
     
-    def interrogate(self, synapse, activation):
+    def interrogate(self, inbound_synapse, activation):
         activation_value = self.activations.get(activation, 0)
         if  activation_value < 1:
-            link_value = synapse.marginal_link_value(activation)
+            link_value = inbound_synapse.marginal_link_value(activation)
             activation_value += link_value
             self.activations[activation] = activation_value
-        # when an output is fully activated, activation is complete
         if activation_value >= 1:
-            return self
-        return []
+            self.activations[activation] = 1
+        return ([], self)
 
 
 class ReinforceProbe:
@@ -94,50 +93,58 @@ class ReinforceProbe:
             yield  ReinforceProbe(synapse.left, self.activation, synapse, self)
     
     def reinforce(self, factor):
-        if factor < 0:
-            weight = self.synapse.weight + factor * self.vistation_weight
-        else:
-            weight = self.synapse.weight + factor * (1 - self.vistation_weight)
-        if weight < .001:
-            self.synapse.weight = .001
-        elif weight > 1:
-            self.synapse.weight = 1
-        else:
-            self.synapse.weight = weight
+        if self.synapse is not None:
+            if factor < 0:
+                weight = self.synapse.weight + factor * self.vistation_weight
+            else:
+                weight = self.synapse.weight + factor * (1 - self.vistation_weight)
+            if weight < .001:
+                self.synapse.weight = .001
+            elif weight > 1:
+                self.synapse.weight = 1
+            else:
+                self.synapse.weight = weight
+
+
+ScoredOutput = namedtuple('ScoredOutput', ['output', 'score'])
+IOData = namedtuple('IOData', ['inputs', 'scored_outputs'])
 
 
 class Activation:
 
     def __init__(self, *inputs):
         self.inputs = inputs
-        self.output = None
+        self.outputs = None
     
     def resolve(self, max_steps=1000):
-        current_iteration = [interrogation for input_ in self.inputs for interrogation in input_.interrogate(None, self)]
-        if self.output is None:
+        current_iteration = [interrogation for input_ in self.inputs for interrogation in input_.interrogate(None, self)[0]]
+        if self.outputs is None:
+            outputs = set()
             for _ in range(max_steps):
                 next_iteration = []
+                print(len(current_iteration))
                 for interrogate in current_iteration:
-                    results = interrogate()
-                    if isinstance(results, list):
-                        next_iteration.extend(results)
-                    else:
-                        self.output = results
-                        break
-                if not next_iteration and not self.output:
-                    raise RuntimeError('unresolvable')
-                if self.output is not None:
+                    results, output = interrogate()
+                    next_iteration.extend(results)
+                    if output is not None:
+                        outputs.add(output)
+                if not next_iteration:
                     break
                 current_iteration = next_iteration
-            else:
-                raise RuntimeError('unresolvable')
-        return self.output
+            self.outputs = [ScoredOutput(o, o.activation_value(self)) for o in outputs]
+            self.outputs.sort(key=lambda so: so.score, reverse=True)
+        return self.outputs
     
-    def reinforce(self, factor, max_steps=10000):
-        if self.output is None:
+    def reinforce(self, factor, target_output, max_steps=10000):
+        if self.outputs is None:
             raise RuntimeError('solution has not been resolved')
+        for scored_output in self.outputs:
+            if scored_output.output is target_output:
+                break
+        else:
+            raise ValueError('target_output provided is not in the output group for this activation')
         probes = deque()
-        probes.append(ReinforceProbe(self.output, self))
+        probes.append(ReinforceProbe(target_output, self))
         paths = {input: [] for input in self.inputs}
         for _ in range(max_steps):
             if not probes:
@@ -159,6 +166,12 @@ class Activation:
                 while cursor.parent is not None:
                     cursor = cursor.parent
                     cursor.reinforce(path_factor)
+    
+    def io_data(self):
+        # convenience method to provide an object representing the io of the Activation that allows
+        # references to the activation to be released, so solutions can be stored but still allow
+        # for the activation dictionaries to be flushed
+        return IOData(self.inputs, self.outputs)
 
 
 class Cluster:
@@ -234,19 +247,24 @@ class Network:
 
 # network = Network(('1',), ('1',), 2, 3, lambda *_: 1)
 # activation = network.spawn_activation('1')
-# for _ in range(1000):
-#     try:
-#         print(activation.resolve(max_steps=1000).value)
-#     except RuntimeError:
-#         pass
-#     else:
-#         break
+# print(activation.resolve(max_steps=10))
 # print(network.outputs['1'].activation_value(activation))
 
 
-# network = Network(('0', '1', '2', '+'), ('1', '2', '3'), 45, 135)
-# activation = network.spawn_activation('0', '1', '+')
-# print(activation.resolve(max_steps=100).value)
+network = Network(('0', '1', '2', '+'), ('1', '2', '3'), 21, 126, lambda *_: 7)
+scenarios = iter(cycle(((('0', '1', '+'), '1'),(('0', '2', '+'), '2'),(('2', '1', '+'), '3'))))
+for i in range(30):
+    print(f'------ {i} ------')
+    inputs, expected = next(scenarios)
+    activation = network.spawn_activation(*inputs)
+    result = activation.resolve(max_steps=10)
+    for output in result:
+        print(output.score, output.output.value)
+        if output.output.value == expected:
+            print('^correct^')
+            activation.reinforce(.5, output.output)
+        else:
+            activation.reinforce(-.5, output.output)
 
 
 def test_neuron_activation_value_0():
@@ -344,8 +362,26 @@ def test_neuron_interrogation_already_activated():
     inbound_synapse.activations[activation] = .1
     inbound_neuron.activations[activation] = .5
     neuron.activations[activation] = .1
+    outbound_synapse.activations[activation] = .25
     outbound_neuron.activations[activation] = .35
     return_value = neuron.interrogate(inbound_synapse, activation)
     assert len(return_value) == 1
     assert return_value[0].func.__self__ is outbound_neuron
     assert neuron.activation_value(activation) == .25
+
+def test_neuron_interrogation_already_fully_activated():
+    inbound_neuron = Neuron()
+    neuron = Neuron()
+    outbound_neuron = Neuron()
+    inbound_synapse = Synapse(inbound_neuron, neuron)
+    inbound_synapse.weight = .5
+    outbound_synapse = Synapse(neuron, outbound_neuron)
+    activation = Activation()
+    inbound_synapse.activations[activation] = .1
+    inbound_neuron.activations[activation] = .5
+    neuron.activations[activation] = 1
+    outbound_synapse.activations[activation] = .25
+    outbound_neuron.activations[activation] = .35
+    return_value = neuron.interrogate(inbound_synapse, activation)
+    assert len(return_value) == 0
+    assert neuron.activation_value(activation) == 1
