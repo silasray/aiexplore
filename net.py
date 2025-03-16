@@ -36,13 +36,13 @@ class Neuron:
         return self.activations.get(activation, 0)
     
     def interrogate(self, inbound_synapse, activation):
-        activation_value = self.activations.get(activation, 0)
-        if  activation_value < 1:
-            link_value = inbound_synapse.marginal_link_value(activation)
-            activation_value += link_value
+        marginal_link_value = inbound_synapse.marginal_link_value(activation)
+        if  marginal_link_value > .000001:
+            activation_value = self.activations.get(activation, 0) + marginal_link_value
             if activation_value > 1:
-                activation_value = 1
-            self.activations[activation] = activation_value
+                self.activations[activation] = 1
+            else:
+                self.activations[activation] = activation_value
             return ([outbound_synapse.interrogate(activation) for outbound_synapse in self.right_synapses], None)
         return ([], None)
 
@@ -67,13 +67,13 @@ class Output(Neuron):
         self.value = value
     
     def interrogate(self, inbound_synapse, activation):
-        activation_value = self.activations.get(activation, 0)
-        if  activation_value < 1:
-            link_value = inbound_synapse.marginal_link_value(activation)
-            activation_value += link_value
-            self.activations[activation] = activation_value
-        if activation_value >= 1:
-            self.activations[activation] = 1
+        marginal_link_value = inbound_synapse.marginal_link_value(activation)
+        if  marginal_link_value > .000001:
+            activation_value = self.activations.get(activation, 0) + marginal_link_value
+            if activation_value > 1:
+                self.activations[activation] = 1
+            else:
+                self.activations[activation] = activation_value
         return ([], self)
 
 
@@ -116,13 +116,14 @@ class Activation:
         self.inputs = inputs
         self.outputs = None
     
-    def resolve(self, max_steps=1000):
+    def resolve(self, max_steps=1000, print_sampling_frequency=100):
         current_iteration = [interrogation for input_ in self.inputs for interrogation in input_.interrogate(None, self)[0]]
         if self.outputs is None:
             outputs = set()
-            for _ in range(max_steps):
+            for i in range(max_steps):
                 next_iteration = []
-                print(len(current_iteration))
+                if i % print_sampling_frequency == 0:
+                    print(i, len(current_iteration))
                 for interrogate in current_iteration:
                     results, output = interrogate()
                     next_iteration.extend(results)
@@ -257,7 +258,7 @@ for i in range(30):
     print(f'------ {i} ------')
     inputs, expected = next(scenarios)
     activation = network.spawn_activation(*inputs)
-    result = activation.resolve(max_steps=10)
+    result = activation.resolve(max_steps=100, print_sampling_frequency=10)
     for output in result:
         print(output.score, output.output.value)
         if output.output.value == expected:
